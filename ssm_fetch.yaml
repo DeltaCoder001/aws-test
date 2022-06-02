@@ -1,0 +1,117 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This CloudFormation template builds a Lambda that is executed when stack is deployed.The purpose of this Lambda is to get  parameter from Secret Manager and write it back to S3.
+Resources:
+  ExerciseLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: 'exercise-lambda'
+      Handler: "index.lambda_handler"
+      Timeout: 15
+      Role: !GetAtt 'LambdaExecutionRole.Arn'
+      Runtime: python3.6
+      Environment:
+        Variables:
+          s3_bucket: storagedevs
+          s3_key: test
+          sercet_title: dev/user
+      Code:
+        ZipFile: |
+          import json
+          import logging
+          import boto3
+          import os
+          import cfnresponse
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+          
+
+          def lambda_handler(event,context):
+            """ Manage delete/create event to cf and add the secret manager content to s3."""
+            if event.get('RequestType') in ['Delete','Create']:
+              logger.info(event.get('RequestType') + ' called writting data to s3 for intial report')
+              write_secret()
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, {"status":200})
+              return;
+            
+            #Custom event when called from the UI
+            write_secret()
+
+
+          def write_secret():
+            """ Fetch secret json from secret manager and writes it to s3. """
+            try:
+              username = fetch_secret()
+              add_to_S3(username)
+            except Exception as ex:
+              info = traceback.format_exc()
+              logger.info('Error occured while processing your information --exercise-lambda :'+str(ex))
+              return {'Status':400,'description':info}
+
+            logger.info('Processed your information successfully --exercise-lambda')
+            return {'Status':200}  
+
+
+          def fetch_secret():
+            """ Fetch secret json from secret manager """
+            client = boto3.client('secretsmanager')
+            response = client.get_secret_value(
+            SecretId=os.getenv('sercet_title')
+          )
+            database_secrets = json.loads(response['SecretString'])
+
+            return database_secrets
+
+
+          def add_to_S3(json_data:dict):
+            """Save data from secret manager to S3 bucket"""
+            s3 = boto3.resource('s3')
+            s3object = s3.Object(os.getenv('s3_bucket'),os.getenv('s3_key'))
+            s3object.put(
+              Body=(bytes(json.dumps(json_data).encode('UTF-8')))
+              )
+
+  LambdaExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+            Action:
+            - sts:AssumeRole
+        Path: "/"
+        Policies:
+        - PolicyName: s3_cloudwatch
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - s3:PutObject
+              Resource: 
+              - arn:aws:s3:::storagedevs/*
+              - arn:aws:logs:*:*:*
+        - PolicyName: ssm
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - secretsmanager:GetSecretValue
+              Resource: 
+                arn:aws:secretsmanager:us-east-1:261597632652:secret:dev/user-sYq6UF
+  
+  ExerciseLambdaInvocation:
+    DependsOn: ExerciseLambda
+    Type: Custom::InvokeCustomLambda
+    Properties:
+      ServiceToken: !GetAtt ExerciseLambda.Arn
+  
+   
