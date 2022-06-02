@@ -32,7 +32,7 @@ Resources:
               logger.info(event.get('RequestType') + ' called writting data to s3 for intial report')
               write_secret()
               cfnresponse.send(event, context, cfnresponse.SUCCESS, {"status":200})
-              return;
+              return
             
             #Custom event when called from the UI
             write_secret()
